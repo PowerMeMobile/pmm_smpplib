@@ -109,9 +109,9 @@ handle_event(_Event, St) ->
     {ok, St}.
 
 handle_info({timeout, TRef, midnight_check}, #st{tref = TRef} = St) ->
-    {Date, _Time} = date(),
     TRef2 = erlang:start_timer(?MIDNIGHT_CHECK_INTERVAL, self(), midnight_check),
     St1 = St#st{tref = TRef2},
+    Date = date(),
     case {St#st.date, St#st.fd} of
         {_, undefined} ->
             {ok, St1};
@@ -146,11 +146,11 @@ do_log(ensure_dir_and_file, Pdu, St) ->
     {Date, Time} = calendar:local_time(),
     St1 = St#st{last_entry = Time},
     case St#st.date of
-        Date -> do_log(write, Pdu, St1);
-        _    -> do_log(write, Pdu, handle_date_change(Date, St1))
+        Date -> do_log(write_file, Pdu, St1);
+        _    -> do_log(write_file, Pdu, handle_date_change(Date, St1))
     end;
 
-do_log(write, Pdu, St) ->
+do_log(write_file, Pdu, St) ->
     file:write(St#st.fd, (St#st.fmt_fun)(Pdu)),
     {ok, FileInfo} = file:read_file_info(St#st.file_name),
     case FileInfo#file_info.size >= St#st.max_size of
