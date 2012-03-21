@@ -93,7 +93,10 @@ handle_call({activate, Params}, #st{active = false} = St) ->
 
 handle_call(deactivate, #st{active = true} = St) ->
     erlang:cancel_timer(St#st.tref),
-    St1 = close_and_rename_prev_file(St),
+    St1 = case St#st.fd of
+              undefined -> St;
+              _         -> close_and_rename_prev_file(St)
+          end,
     {ok, ok, St1#st{tref = undefined, active = false}};
 
 handle_call(Request, _St) ->
