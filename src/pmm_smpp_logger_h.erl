@@ -25,7 +25,7 @@
              base_file_name :: string(),
              max_size :: pos_integer(),
              active = false :: boolean(),
-             backlog = [] :: [binary()],
+             backlog = [] :: [{in | out, binary()}],
              file_name :: string(),
              fd :: pid(),
              date :: calendar:date(),
@@ -33,7 +33,7 @@
              last_entry :: calendar:time(),
              tref :: reference()}).
 
--type fmt_fun() :: fun((PDU::binary()) -> iodata()).
+-type fmt_fun() :: fun((Direction :: in | out, PDU::binary()) -> iodata()).
 
 -define(gv(Key, Params), proplists:get_value(Key, Params)).
 
@@ -46,7 +46,7 @@
 
 -spec add_to_manager(pid()) -> 'ok'.
 add_to_manager(SMPPLogMgr) ->
-    add_to_manager(SMPPLogMgr, fun pmm_smpp_fmt:format/1).
+    add_to_manager(SMPPLogMgr, fun pmm_smpp_fmt:format/2).
 
 -spec add_to_manager(pid(), fmt_fun()) -> 'ok'.
 add_to_manager(SMPPLogMgr, FmtFun) ->
@@ -89,7 +89,9 @@ handle_call({activate, Params}, #st{active = false} = St) ->
                 base_dir = ?gv(base_dir, Params),
                 base_file_name = ?gv(base_file_name, Params),
                 max_size = ?gv(max_size, Params)},
-    {ok, ok, lists:foldr(fun do_log/2, St1, St#st.backlog)};
+    {ok, ok, lists:foldr(fun({Direction, Pdu}, State) ->
+                             do_log(Direction, Pdu, State)
+                         end, St1, St#st.backlog)};
 
 handle_call(deactivate, #st{active = true} = St) ->
     erlang:cancel_timer(St#st.tref),
@@ -102,11 +104,11 @@ handle_call(deactivate, #st{active = true} = St) ->
 handle_call(Request, _St) ->
     {remove_handler, {unexpected_call, Request}}.
 
-handle_event({pdu, BinPdu}, #st{active = false} = St) ->
-    {ok, St#st{backlog = [BinPdu|St#st.backlog]}};
+handle_event({pdu, Direction, BinPdu}, #st{active = false} = St) ->
+    {ok, St#st{backlog = [{Direction, BinPdu}|St#st.backlog]}};
 
-handle_event({pdu, BinPdu}, St) ->
-    {ok, do_log(BinPdu, St)};
+handle_event({pdu, Direction, BinPdu}, St) ->
+    {ok, do_log(Direction, BinPdu, St)};
 
 handle_event(_Event, St) ->
     {ok, St}.
@@ -134,31 +136,31 @@ code_change(_OldVsn, St, _Extra) ->
 %% private functions
 %% -------------------------------------------------------------------------
 
-do_log(Pdu, St) ->
-    do_log(ensure_dir_and_file, Pdu, St).
+do_log(Direction, Pdu, St) ->
+    do_log(ensure_dir_and_file, Direction, Pdu, St).
 
-do_log(ensure_dir_and_file, Pdu, #st{fd = undefined} = St) ->
+do_log(ensure_dir_and_file, Direction, Pdu, #st{fd = undefined} = St) ->
     {Date, Time} = calendar:local_time(),
     FileName = new_file_name(Date, Time, St),
     file:make_dir(log_dir(Date, St)),
     {ok, Fd} = file:open(FileName, ?FILE_OPTS),
-    do_log(write_file, Pdu, St#st{fd = Fd, file_name = FileName, date = Date,
-                                  first_entry = Time, last_entry = Time});
+    do_log(write_file, Direction, Pdu,
+           St#st{fd = Fd, file_name = FileName, date = Date,
+                 first_entry = Time, last_entry = Time});
 
-do_log(ensure_dir_and_file, Pdu, St) ->
+do_log(ensure_dir_and_file, Direction, Pdu, St) ->
     {Date, Time} = calendar:local_time(),
     St1 = St#st{last_entry = Time},
     case St#st.date of
-        Date -> do_log(write_file, Pdu, St1);
-        _    -> do_log(write_file, Pdu, handle_date_change(Date, St1))
+        Date -> do_log(write_file, Direction, Pdu, St1);
+        _    -> do_log(write_file, Direction, Pdu, handle_date_change(Date, St1))
     end;
 
-do_log(write_file, Pdu, St) ->
-    file:write(St#st.fd, (St#st.fmt_fun)(Pdu)),
+do_log(write_file, Direction, Pdu, St) ->
+    file:write(St#st.fd, (St#st.fmt_fun)(Direction, Pdu)),
     {ok, FileInfo} = file:read_file_info(St#st.file_name),
     case FileInfo#file_info.size >= St#st.max_size of
         true ->
-            file:close(St#st.fd),
             close_and_rename_prev_file(St),
             NewName = new_file_name(St#st.date, St#st.last_entry, St),
             {ok, Fd} = file:open(NewName, ?FILE_OPTS),

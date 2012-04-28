@@ -2,25 +2,25 @@
 
 -include_lib("oserl/include/oserl.hrl").
 
--export([format/1, format/3]).
+-export([format/2, format/4]).
 
 %% -------------------------------------------------------------------------
 %% API
 %% -------------------------------------------------------------------------
 
--spec format(binary()) -> iolist().
-format(BinPdu) ->
-    format(BinPdu, fun smpp_error:format/1, local).
+-spec format(in | out, binary()) -> iolist().
+format(Direction, BinPdu) ->
+    format(Direction, BinPdu, fun smpp_error:format/1, local).
 
--spec format(binary(), fun((pos_integer()) -> string()), 'local' | 'universal') ->
+-spec format(in | out, binary(), fun((pos_integer()) -> string()), 'local' | 'universal') ->
              iolist().
-format(BinPdu, ErrFun, TimeLocale) ->
+format(Direction, BinPdu, ErrFun, TimeLocale) ->
     {ok, {CmdId, Status, SeqNum, _Body} = Pdu} = smpp_operation:unpack(BinPdu),
     Level = case Status of
                 ?ESME_ROK -> info;
                 _         -> error
             end,
-    Banner = banner(Level, TimeLocale),
+    Banner = banner(Direction, Level, TimeLocale),
     Details = case Level of
                   error -> [Banner, "error: ", ErrFun(Status), "\n"];
                   info  -> ""
@@ -39,16 +39,17 @@ format(BinPdu, ErrFun, TimeLocale) ->
 %% private functions
 %% -------------------------------------------------------------------------
 
-banner(Level, TimeLocale) ->
+banner(Direction, Level, TimeLocale) ->
     {_, _, MicroSecs} = Now = os:timestamp(),
     {{Y, Mon, D}, {H, Min, S}} =
         case TimeLocale of
             local     -> calendar:now_to_local_time(Now);
             universal -> calendar:now_to_universal_time(Now)
         end,
+    Arrow = case Direction of in -> $<; out -> $> end,
     [io_lib:format("~4w-~2..0w-~2..0w ~2..0w:~2..0w:~2..0w.~3..0w",
                    [Y, Mon, D, H, Min, S, MicroSecs div 1000]),
-     " [", atom_to_list(Level), "] "].
+     " ", Arrow, " [", atom_to_list(Level), "] "].
 
 cmdname(CmdId) ->
     string:to_upper(atom_to_list(?COMMAND_NAME(CmdId))).
