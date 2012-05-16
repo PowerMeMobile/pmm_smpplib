@@ -27,7 +27,7 @@ format(Direction, BinPdu, ErrFun, TimeLocale) ->
               end,
     Size = size(BinPdu),
     Params = [{command_length, Size}|smpp_operation:to_list(Pdu)],
-    [Banner, $\n,
+    [$\n,
      Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), $\n,
      Details,
      Banner, "hex dump (", integer_to_list(Size), " bytes):", $\n,

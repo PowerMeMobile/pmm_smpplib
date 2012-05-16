@@ -5,19 +5,11 @@
 -include_lib("kernel/include/file.hrl").
 
 %% API exports
--export([add_to_manager/1,
-         add_to_manager/2,
-         sup_add_to_manager/1,
-         sup_add_to_manager/2,
-         activate/2,
-         deactivate/1]).
+-export([add_to_manager/1, add_to_manager/2, sup_add_to_manager/1,
+         sup_add_to_manager/2, activate/2, deactivate/1]).
 
 %% gen_event exports
--export([init/1,
-         terminate/2,
-         handle_call/2,
-         handle_event/2,
-         handle_info/2,
+-export([init/1, terminate/2, handle_call/2, handle_event/2, handle_info/2,
          code_change/3]).
 
 -record(st, {fmt_fun :: fmt_fun(),
@@ -54,7 +46,7 @@ add_to_manager(SMPPLogMgr, FmtFun) ->
 
 -spec sup_add_to_manager(pid()) -> 'ok'.
 sup_add_to_manager(SMPPLogMgr) ->
-    sup_add_to_manager(SMPPLogMgr, fun pmm_smpp_fmt:format/1).
+    sup_add_to_manager(SMPPLogMgr, fun pmm_smpp_fmt:format/2).
 
 -spec sup_add_to_manager(pid(), fmt_fun()) -> 'ok'.
 sup_add_to_manager(SMPPLogMgr, FmtFun) ->
