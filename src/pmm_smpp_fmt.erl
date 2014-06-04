@@ -101,7 +101,11 @@ params(CmdId, Params, Banner) ->
     lists:reverse(
         lists:foldl(
             fun({K, V}, [H|T]) ->
-                KV = lists:concat([K, "=", V]),
+                V1 = case is_tuple(V) of
+                        true -> io_lib:format("~p", [V]);
+                        false -> V
+                end,
+                KV = lists:concat([K, "=", V1]),
                 Len = lists:flatlength(H),
                 if
                     Len =:= 0 ->
