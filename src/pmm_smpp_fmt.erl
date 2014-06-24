@@ -365,7 +365,11 @@ params(CmdId, Params, Banner) ->
     BannerLen = lists:flatlength(Banner),
     {_, Result} =  lists:foldl(
         fun({K, V}, {Len, [H|T]}) ->
-            KV = lists:concat([K, "=", V]),
+            V1 = case is_tuple(V) of
+                    true -> io_lib:format("~p", [V]);
+                    false -> V
+            end,
+            KV = lists:concat([K, "=", V1]),
             KVLen = length(KV),
             if
                 Len =:= 0 ->
