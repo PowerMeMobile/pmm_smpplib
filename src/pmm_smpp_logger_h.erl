@@ -15,7 +15,7 @@
 -record(st, {fmt_fun :: fmt_fun(),
              base_dir :: string(),
              base_file_name :: string(),
-             size :: non_neg_integer(),
+             counter :: non_neg_integer(),
              max_size :: pos_integer(),
              active = false :: boolean(),
              backlog = [] :: [{in | out, binary()}],
@@ -30,7 +30,7 @@
 
 -define(gv(Key, Params), proplists:get_value(Key, Params)).
 
--define(FILE_OPTS, [write, raw, binary, append]).
+-define(FILE_OPTS, [write, raw, binary, append, {delayed_write, 1048576, 5000}]).
 -define(MIDNIGHT_CHECK_INTERVAL, 5000).
 
 %% -------------------------------------------------------------------------
@@ -81,7 +81,7 @@ handle_call({activate, Params}, #st{active = false} = St) ->
                 tref = TRef,
                 base_dir = ?gv(base_dir, Params),
                 base_file_name = ?gv(base_file_name, Params),
-                size = 0,
+                counter = 0,
                 max_size = ?gv(max_size, Params)},
     {ok, ok, lists:foldr(fun({Direction, Pdu}, State) ->
                              do_log(Direction, Pdu, State)
@@ -152,15 +152,21 @@ do_log(ensure_dir_and_file, Direction, Pdu, St) ->
 
 do_log(write_file, Direction, Pdu, St) ->
     file:write(St#st.fd, (St#st.fmt_fun)(Direction, Pdu)),
-    Size = St#st.size,
-    case Size * 825 >= St#st.max_size of
+    Counter = St#st.counter,
+    case Counter rem 100 =:= 0 of
         true ->
-            close_and_rename_prev_file(St),
-            NewName = new_file_name(St#st.date, St#st.last_entry, St),
-            {ok, Fd} = file:open(NewName, ?FILE_OPTS),
-            St#st{fd = Fd, file_name = NewName, first_entry = St#st.last_entry, size = 0};
-        false ->
-            St#st{size = Size + 1}
+            {ok, FileInfo} = file:read_file_info(St#st.file_name),
+            case FileInfo#file_info.size >= St#st.max_size of
+                true ->
+                    close_and_rename_prev_file(St),
+                    NewName = new_file_name(St#st.date, St#st.last_entry, St),
+                    {ok, Fd} = file:open(NewName, ?FILE_OPTS),
+                    St#st{fd = Fd, file_name = NewName, first_entry = St#st.last_entry, counter = 0};
+                _ ->
+                    St#st{counter = Counter + 1}
+            end;
+        _ ->
+            St#st{counter = Counter + 1}
     end.
 
 handle_date_change(Date, St) ->
@@ -173,7 +179,7 @@ handle_date_change(Date, St) ->
     NewName = new_file_name(Date, {0, 0, 0}, St),
     file:make_dir(log_dir(Date, St)),
     {ok, Fd} = file:open(NewName, ?FILE_OPTS),
-    St#st{fd = Fd, file_name = NewName, date = Date, first_entry = {0, 0, 0}, size = 0}.
+    St#st{fd = Fd, file_name = NewName, date = Date, first_entry = {0, 0, 0}, counter = 0}.
 
 close_and_rename_prev_file(St) ->
     file:close(St#st.fd),
@@ -182,7 +188,7 @@ close_and_rename_prev_file(St) ->
                                fmt_time(St#st.last_entry)  ++ "_" ++
                                St#st.base_file_name),
     file:rename(St#st.file_name, ClosedName),
-    St#st{file_name = undefined, fd = undefined, size = 0}.
+    St#st{file_name = undefined, fd = undefined, counter = 0}.
 
 new_file_name(Date, Time, St) ->
     filename:join(log_dir(Date, St),
