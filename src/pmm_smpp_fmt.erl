@@ -6,7 +6,7 @@
 
 -compile(export_all).
 
--define(TEST, 1).
+%-define(TEST, 1).
 -ifdef(TEST).
     -include_lib("eunit/include/eunit.hrl").
 -endif.
