@@ -2,7 +2,7 @@
 
 -include_lib("oserl/include/oserl.hrl").
 
--export([format/2, format/4]).
+-export([format/2, format/4, format/5]).
 
 -compile(export_all).
 
@@ -15,13 +15,22 @@
 %% API
 %% -------------------------------------------------------------------------
 
--spec format(in | out, binary()) -> iolist().
-format(Direction, BinPdu) ->
-    format(Direction, BinPdu, fun smpp_error:format/1, local).
+-type time_locale() :: 'local' | 'universal'.
+-type direction() :: in | out.
+-type err_fun() :: fun((pos_integer()) -> string()).
 
--spec format(in | out, binary(), fun((pos_integer()) -> string()), 'local' | 'universal') ->
+-spec format(direction(), binary()) -> iolist().
+format(Direction, BinPdu) ->
+    format(Direction, BinPdu, fun smpp_error:format/1, local, false).
+
+-spec format(direction(), binary(), err_fun(), time_locale()) ->
              iolist().
 format(Direction, BinPdu, ErrFun, TimeLocale) ->
+    format(Direction, BinPdu, ErrFun, TimeLocale, false).
+
+-spec format(direction(), binary(), err_fun(), time_locale(), boolean()) ->
+             iolist().
+format(Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex) ->
     {ok, {CmdId, Status, SeqNum, _Body} = Pdu} = smpp_operation:unpack(BinPdu),
     Level = case Status of
                 ?ESME_ROK -> "info";
@@ -33,12 +42,18 @@ format(Direction, BinPdu, ErrFun, TimeLocale) ->
                   "info"  -> ""
               end,
     Size = size(BinPdu),
-    Params = [{command_length, Size}|smpp_operation:to_list(Pdu)],
+
+    Params0 = [{command_length, Size}|smpp_operation:to_list(Pdu)],
+
+    {Params, ShortMessageHex} =
+        get_short_message_and_udh_hex(CmdId, LogShortMsgAndUdhHex, Banner, Params0),
+
     [$\n,
      Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), $\n,
      Details,
      Banner, "hex dump (", integer_to_list(Size), " bytes):", $\n,
      hexdump(BinPdu, Banner),
+     ShortMessageHex,
      Banner, "params:", $\n,
      params(CmdId, Params, Banner), $\n].
 
@@ -417,6 +432,34 @@ unfold_multi(?COMMAND_ID_SUBMIT_MULTI_RESP, Params) ->
 unfold_multi(_CmdId, Params) ->
     Params.
 
+get_short_message_and_udh_hex(CmdId, true, Banner, Params0) when
+        CmdId =:= ?COMMAND_ID_SUBMIT_SM orelse CmdId =:= ?COMMAND_ID_DELIVER_SM ->
+
+   {value, {short_message, ShortMsg}, _} =
+       lists:keytake(short_message, 1, Params0),
+
+    EsmClass = proplists:get_value(esm_class, Params0),
+    HasUDH = (EsmClass band ?ESM_CLASS_GSM_UDHI) =:= ?ESM_CLASS_GSM_UDHI,
+    Params =
+    case HasUDH of
+        true ->
+            {UDH, _Rest} = smpp_sm:chop_udh(ShortMsg),
+            [{udh, hexify(list_to_binary(UDH))} | Params0];
+        false -> Params0
+    end,
+
+    DataCoding = proplists:get_value(data_coding, Params),
+    ShortMsgHex =
+    case lists:member(DataCoding band 15, [0,1,3]) of
+        false ->
+            ShortMsgBin = list_to_binary(ShortMsg),
+            [Banner, "short_message (", integer_to_list(size(ShortMsgBin)), " bytes):", $\n,
+             hexdump(ShortMsgBin, Banner)];
+        true -> ""
+    end,
+    {Params, ShortMsgHex};
+get_short_message_and_udh_hex(_, _, _, Params) -> {Params, ""}.
+
 %% -------------------------------------------------------------------------
 %% Tests
 %% -------------------------------------------------------------------------
@@ -516,5 +559,68 @@ params_3_test() ->
 "source_addr_npi=1,source_addr_ton=1,service_type=",
     Actual = lists:flatten(pmm_smpp_fmt:params(0, Params, "")),
     ?assertEqual(Expected, Actual).
+
+sm_hex_test() ->
+    DefaultResult = {[{key, value}], ""},
+    DefaultResult = get_short_message_and_udh_hex(someCmdId, true, "", [{key, value}]),
+    DefaultResult = get_short_message_and_udh_hex(?COMMAND_ID_DELIVER_SM, false, "", [{key, value}]),
+    DefaultResult = get_short_message_and_udh_hex(?COMMAND_ID_SUBMIT_SM, false, "", [{key, value}]),
+
+    Params0 = [
+        {esm_class, 0},
+        {data_coding, 0},
+        {short_message, "msg"}
+    ],
+    {Params0, ""} = get_short_message_and_udh_hex(?COMMAND_ID_SUBMIT_SM, true, "", Params0),
+
+    Params1 = [
+        {esm_class, 0},
+        {data_coding, 1},
+        {short_message, "msg"}
+    ],
+    {Params1, ""} = get_short_message_and_udh_hex(?COMMAND_ID_SUBMIT_SM, true, "", Params1),
+
+    Params2 = [
+        {esm_class, 0},
+        {data_coding, 3},
+        {short_message, "msg"}
+    ],
+    {Params2, ""} = get_short_message_and_udh_hex(?COMMAND_ID_SUBMIT_SM, true, "", Params2),
+
+
+    Params3 = [
+        {esm_class, 0},
+        {data_coding, 2},
+        {short_message, "hello"}
+    ],
+    SMHex3 = "short_message (5 bytes):\n68656C6C:6F\n",
+    {Params3, SMHex3Out} =
+        get_short_message_and_udh_hex(?COMMAND_ID_SUBMIT_SM, true, "", Params3),
+    ?debugVal(lists:flatten(SMHex3Out)),
+    SMHex3 = lists:flatten(SMHex3Out),
+
+    %% Concatenated short message, 16-bit reference number
+    UDH = [4,8,2,0,1],
+    Params4 = [
+        {esm_class, 0},
+        {data_coding, 2},
+        {short_message, UDH ++ "hello"}
+    ],
+    SMHex4 = "short_message (10 bytes):\n04080200:0168656C:6C6F\n",
+    {Params4, SMHex4Out} =
+        get_short_message_and_udh_hex(?COMMAND_ID_SUBMIT_SM, true, "", Params4),
+    ?debugVal(lists:flatten(SMHex4Out)),
+    SMHex4 = lists:flatten(SMHex4Out),
+
+    Params5 = [
+        {esm_class, 64},
+        {data_coding, 3},
+        {short_message, UDH ++ "hello"}
+    ],
+    Params5Out = [{udh, hexify(list_to_binary(UDH))} | Params5],
+    {Params5Out, ""} =
+        get_short_message_and_udh_hex(?COMMAND_ID_SUBMIT_SM, true, "", Params5).
+
+
 
 -endif.
