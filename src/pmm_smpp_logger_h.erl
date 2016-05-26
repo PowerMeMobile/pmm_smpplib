@@ -151,7 +151,18 @@ do_log(ensure_dir_and_file, Direction, Pdu, St) ->
     end;
 
 do_log(write_file, Direction, Pdu, St) ->
-    file:write(St#st.fd, (St#st.fmt_fun)(Direction, Pdu)),
+    case file:write(St#st.fd, (St#st.fmt_fun)(Direction, Pdu)) of
+        {error, badarg} ->
+            PduHex = [io_lib:format("~2..0s", [integer_to_binary(I, 16)]) || <<I>> <= Pdu],
+            {_, _, MicroSecs} = Now = os:timestamp(),
+            {{Y, Mon, D}, {H, Min, S}} = calendar:now_to_local_time(Now),
+            Time = io_lib:format("~2..0w~2..0w~2..0w ~2..0w:~2..0w:~2..0w.~3..0w",
+                   [Y rem 100, Mon, D, H, Min, S, MicroSecs div 1000]),
+            Msg = [$\n, Time, " Corrupted PDU hex: ", PduHex, $\n],
+            file:write(St#st.fd, Msg);
+        _ -> ok
+    end,
+
     Counter = St#st.counter,
     case Counter rem 100 =:= 0 of
         true ->
