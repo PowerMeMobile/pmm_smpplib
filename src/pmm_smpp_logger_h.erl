@@ -83,9 +83,11 @@ handle_call({activate, Params}, #st{active = false} = St) ->
                 base_file_name = ?gv(base_file_name, Params),
                 counter = 0,
                 max_size = ?gv(max_size, Params)},
-    {ok, ok, lists:foldr(fun({Direction, Pdu}, State) ->
-                             do_log(Direction, Pdu, State)
-                         end, St1, St#st.backlog)};
+    FoldFun = fun({Direction, Pdu}, State) ->
+        do_log(Direction, Pdu, undefined, State)
+    end,
+    NewSt = lists:foldr(FoldFun, St1, St#st.backlog),
+    {ok, ok, NewSt};
 
 handle_call(deactivate, #st{active = true} = St) ->
     erlang:cancel_timer(St#st.tref),
@@ -102,7 +104,10 @@ handle_event({pdu, Direction, BinPdu}, #st{active = false} = St) ->
     {ok, St#st{backlog = [{Direction, BinPdu}|St#st.backlog]}};
 
 handle_event({pdu, Direction, BinPdu}, St) ->
-    {ok, do_log(Direction, BinPdu, St)};
+    {ok, do_log(Direction, BinPdu, undefined, St)};
+
+handle_event({pdu, Direction, BinPdu, Timestamp}, St) ->
+    {ok, do_log(Direction, BinPdu, Timestamp, St)};
 
 handle_event(_Event, St) ->
     {ok, St}.
@@ -130,32 +135,45 @@ code_change(_OldVsn, St, _Extra) ->
 %% private functions
 %% -------------------------------------------------------------------------
 
-do_log(Direction, Pdu, St) ->
-    do_log(ensure_dir_and_file, Direction, Pdu, St).
+do_log(Direction, Pdu, Timestamp, St) ->
+    do_log(ensure_dir_and_file, Direction, Pdu, Timestamp, St).
 
-do_log(ensure_dir_and_file, Direction, Pdu, #st{fd = undefined} = St) ->
+do_log(ensure_dir_and_file, Direction, Pdu, Timestamp, #st{fd = undefined} = St) ->
     {Date, Time} = calendar:local_time(),
     FileName = new_file_name(Date, Time, St),
     file:make_dir(log_dir(Date, St)),
     {ok, Fd} = file:open(FileName, ?FILE_OPTS),
-    do_log(write_file, Direction, Pdu,
+    do_log(write_file, Direction, Pdu, Timestamp,
            St#st{fd = Fd, file_name = FileName, date = Date,
                  first_entry = Time, last_entry = Time});
 
-do_log(ensure_dir_and_file, Direction, Pdu, St) ->
+do_log(ensure_dir_and_file, Direction, Pdu, Timestamp, St) ->
     {Date, Time} = calendar:local_time(),
     St1 = St#st{last_entry = Time},
     case St#st.date of
-        Date -> do_log(write_file, Direction, Pdu, St1);
-        _    -> do_log(write_file, Direction, Pdu, handle_date_change(Date, St1))
+        Date -> do_log(write_file, Direction, Pdu, Timestamp, St1);
+        _    -> do_log(write_file, Direction, Pdu, Timestamp, handle_date_change(Date, St1))
     end;
 
-do_log(write_file, Direction, Pdu, St) ->
-    case file:write(St#st.fd, (St#st.fmt_fun)(Direction, Pdu)) of
+do_log(write_file, Direction, Pdu, Timestamp0, St) ->
+    Timestamp =
+    case Timestamp0 of
+        undefined ->  os:timestamp();
+        _ -> Timestamp0
+    end,
+    FmtFun = St#st.fmt_fun,
+    Formatted =
+    if
+        is_function(FmtFun, 2) ->
+            FmtFun(Direction, Pdu);
+        is_function(FmtFun, 3) ->
+            FmtFun(Direction, Pdu, Timestamp)
+    end,
+    case file:write(St#st.fd, Formatted) of
         {error, badarg} ->
             PduHex = [io_lib:format("~2..0s", [integer_to_binary(I, 16)]) || <<I>> <= Pdu],
-            {_, _, MicroSecs} = Now = os:timestamp(),
-            {{Y, Mon, D}, {H, Min, S}} = calendar:now_to_local_time(Now),
+            {_, _, MicroSecs} = Timestamp,
+            {{Y, Mon, D}, {H, Min, S}} = calendar:now_to_local_time(Timestamp),
             Time = io_lib:format("~2..0w~2..0w~2..0w ~2..0w:~2..0w:~2..0w.~3..0w",
                    [Y rem 100, Mon, D, H, Min, S, MicroSecs div 1000]),
             Msg = [$\n, Time, " Corrupted PDU hex: ", PduHex, $\n],
