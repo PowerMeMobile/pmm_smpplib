@@ -24,13 +24,16 @@
              date :: calendar:date(),
              first_entry :: calendar:time(),
              last_entry :: calendar:time(),
+             file_info_check_rate :: pos_integer(),
+             delayed_write_bytes :: pos_integer(),
+             delayed_write_mseconds :: pos_integer(),
              tref :: reference()}).
 
 -type fmt_fun() :: fun((Direction :: in | out, PDU::binary()) -> iodata()).
 
 -define(gv(Key, Params), proplists:get_value(Key, Params)).
 
--define(FILE_OPTS, [write, raw, binary, append, {delayed_write, 1048576, 5000}]).
+-define(FILE_OPTS, [write, raw, binary, append]).
 -define(MIDNIGHT_CHECK_INTERVAL, 5000).
 
 %% -------------------------------------------------------------------------
@@ -66,7 +69,22 @@ deactivate(SMPPLogMgr) ->
 %% -------------------------------------------------------------------------
 
 init([FmtFun]) ->
-    {ok, #st{fmt_fun = FmtFun}}.
+    {ok, FileInfoCheckRate} = application:get_env(pmm_smpplib, file_info_check_rate, 100),
+    {ok, DelayedWriteBytes} = application:get_env(pmm_smpplib, delayed_write_bytes, 1048576),
+    {ok, DelayedWriteMilSeconds} =application:get_env(pmm_smpplib, delayed_write_mseconds, 5000),
+    error_logger:info_report([
+        {self, self()},
+        {file_info_check_rate, FileInfoCheckRate},
+        {delayed_write_bytes, DelayedWriteBytes},
+        {delayed_write_mseconds, DelayedWriteMilSeconds}
+    ]),
+    St = #st{
+        fmt_fun = FmtFun,
+        file_info_check_rate = FileInfoCheckRate,
+        delayed_write_bytes = DelayedWriteBytes,
+        delayed_write_mseconds = DelayedWriteMilSeconds
+    },
+    {ok, St}.
 
 terminate(_Arg, St) ->
     case St#st.fd of
@@ -142,7 +160,7 @@ do_log(ensure_dir_and_file, Direction, Pdu, Timestamp, #st{fd = undefined} = St)
     {Date, Time} = calendar:local_time(),
     FileName = new_file_name(Date, Time, St),
     file:make_dir(log_dir(Date, St)),
-    {ok, Fd} = file:open(FileName, ?FILE_OPTS),
+    {ok, Fd} = file:open(FileName, get_file_opts(?FILE_OPTS, St)),
     do_log(write_file, Direction, Pdu, Timestamp,
            St#st{fd = Fd, file_name = FileName, date = Date,
                  first_entry = Time, last_entry = Time});
@@ -182,14 +200,14 @@ do_log(write_file, Direction, Pdu, Timestamp0, St) ->
     end,
 
     Counter = St#st.counter,
-    case Counter rem 100 =:= 0 of
+    case Counter rem St#st.file_info_check_rate =:= 0 of
         true ->
             {ok, FileInfo} = file:read_file_info(St#st.file_name),
             case FileInfo#file_info.size >= St#st.max_size of
                 true ->
                     close_and_rename_prev_file(St),
                     NewName = new_file_name(St#st.date, St#st.last_entry, St),
-                    {ok, Fd} = file:open(NewName, ?FILE_OPTS),
+                    {ok, Fd} = file:open(NewName, get_file_opts(?FILE_OPTS, St)),
                     St#st{fd = Fd, file_name = NewName, first_entry = St#st.last_entry, counter = 0};
                 _ ->
                     St#st{counter = Counter + 1}
@@ -207,7 +225,7 @@ handle_date_change(Date, St) ->
     file:rename(St#st.file_name, ClosedName),
     NewName = new_file_name(Date, {0, 0, 0}, St),
     file:make_dir(log_dir(Date, St)),
-    {ok, Fd} = file:open(NewName, ?FILE_OPTS),
+    {ok, Fd} = file:open(NewName, (?FILE_OPTS)),
     St#st{fd = Fd, file_name = NewName, date = Date, first_entry = {0, 0, 0}, counter = 0}.
 
 close_and_rename_prev_file(St) ->
@@ -231,3 +249,7 @@ fmt_date({Y, M, D}) ->
 
 fmt_time({H, M, S}) ->
     lists:flatten(io_lib:format("~2..0w~2..0w~2..0w", [H, M, S])).
+
+
+get_file_opts(Default, St) ->
+    [{delayed_write, St#st.delayed_write_bytes, St#st.delayed_write_mseconds} | Default].
