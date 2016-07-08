@@ -69,9 +69,9 @@ deactivate(SMPPLogMgr) ->
 %% -------------------------------------------------------------------------
 
 init([FmtFun]) ->
-    {ok, FileInfoCheckRate} = application:get_env(pmm_smpplib, file_info_check_rate, 100),
-    {ok, DelayedWriteBytes} = application:get_env(pmm_smpplib, delayed_write_bytes, 1048576),
-    {ok, DelayedWriteMilSeconds} =application:get_env(pmm_smpplib, delayed_write_mseconds, 5000),
+    FileInfoCheckRate = application:get_env(pmm_smpplib, file_info_check_rate, 100),
+    DelayedWriteBytes = application:get_env(pmm_smpplib, delayed_write_bytes, 1048576),
+    DelayedWriteMilSeconds = application:get_env(pmm_smpplib, delayed_write_mseconds, 5000),
     error_logger:info_report([
         {self, self()},
         {file_info_check_rate, FileInfoCheckRate},
