@@ -1,4 +1,4 @@
 {application, pmm_smpplib,
  [{description, "Shared SMPP related code used by Just and Funnel"},
-  {vsn, "0.2.0"},
+  {vsn, git},
   {applications, [kernel, stdlib]}]}.
