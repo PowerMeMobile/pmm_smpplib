@@ -2,7 +2,7 @@
 
 -include_lib("oserl/include/oserl.hrl").
 
--export([format/5]).
+-export([format/6]).
 
 -ifdef(TEST).
 -compile(export_all).
@@ -16,12 +16,12 @@
 -type direction() :: in | out.
 -type err_fun() :: fun((pos_integer()) -> string()).
 
--spec format(direction(), binary(), err_fun(), time_locale(), boolean()) -> iolist().
-format(Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex) ->
+-spec format(direction(), binary(), err_fun(), time_locale(), boolean(), erlang:timestamp()) -> iolist().
+format(Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex, Timestamp) ->
     {ok, {_CmdId, _Status, _SeqNum, _Body} = Pdu} = smpp_operation:unpack(BinPdu),
-    format(Pdu, Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex).
+    format(Pdu, Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex, Timestamp).
 
-format({CmdId, _Status, _SeqNum, _Body} = Pdu, Direction, BinPdu, _ErrFun, TimeLocale, _LogShortMsgAndUdhHex) when
+format({CmdId, _Status, _SeqNum, _Body} = Pdu, Direction, BinPdu, _ErrFun, TimeLocale, _LogShortMsgAndUdhHex, Timestamp) when
         CmdId =:= ?COMMAND_ID_ENQUIRE_LINK orelse
         CmdId =:= ?COMMAND_ID_ENQUIRE_LINK_RESP orelse
         CmdId =:= ?COMMAND_ID_SUBMIT_SM orelse
@@ -35,7 +35,7 @@ format({CmdId, _Status, _SeqNum, _Body} = Pdu, Direction, BinPdu, _ErrFun, TimeL
         CmdId =:= ?COMMAND_ID_BIND_TRANSMITTER_RESP orelse
         CmdId =:= ?COMMAND_ID_BIND_TRANSCEIVER_RESP ->
 
-    Banner = get_banner2(Direction, CmdId, TimeLocale),
+    Banner = get_banner2(Direction, CmdId, TimeLocale, Timestamp),
     [
     $\n,
     get_first_line(Pdu, BinPdu, Banner),
@@ -43,12 +43,12 @@ format({CmdId, _Status, _SeqNum, _Body} = Pdu, Direction, BinPdu, _ErrFun, TimeL
     get_third_line(Pdu, BinPdu, Banner)
     ];
 
-format({CmdId, Status, SeqNum, _Body} = Pdu, Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex) ->
+format({CmdId, Status, SeqNum, _Body} = Pdu, Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex, Timestamp) ->
     Level = case Status of
                 ?ESME_ROK -> "info";
                 _         -> "error"
             end,
-    Banner = banner(Direction, Level, TimeLocale),
+    Banner = banner(Direction, Level, TimeLocale, Timestamp),
     Details = case Level of
                   "error" -> [Banner, "error: ", ErrFun(Status), "\n"];
                   "info"  -> ""
@@ -73,12 +73,12 @@ format({CmdId, Status, SeqNum, _Body} = Pdu, Direction, BinPdu, ErrFun, TimeLoca
 %% private functions
 %% -------------------------------------------------------------------------
 
-banner(Direction, Level, TimeLocale) ->
-    {_, _, MicroSecs} = Now = os:timestamp(),
+banner(Direction, Level, TimeLocale, Timestamp) ->
+    {_, _, MicroSecs} = Timestamp,
     {{Y, Mon, D}, {H, Min, S}} =
         case TimeLocale of
-            local     -> calendar:now_to_local_time(Now);
-            universal -> calendar:now_to_universal_time(Now)
+            local     -> calendar:now_to_local_time(Timestamp);
+            universal -> calendar:now_to_universal_time(Timestamp)
         end,
     Arrow = case Direction of in -> $<; out -> $> end,
     [io_lib:format("~2..0w~2..0w~2..0w ~2..0w:~2..0w:~2..0w.~3..0w",
@@ -392,7 +392,7 @@ get_third_line({CmdId, _Status, _SeqNum, _Body} = Pdu, _BinPdu, Banner) when
 get_third_line(_Pdu, _BinPdu, _Banner) -> [].
 
 
-get_banner2(Direction, CmdId, TimeLocale) ->
+get_banner2(Direction, CmdId, TimeLocale, Timestamp) ->
     Arrow = case Direction of in -> $<; out -> $> end,
 
     CmdShortName =
@@ -413,11 +413,11 @@ get_banner2(Direction, CmdId, TimeLocale) ->
         true                                                -> ""
     end,
 
-    {_, _, MicroSecs} = Now = os:timestamp(),
+    {_, _, MicroSecs} = Timestamp,
     {{Y, Mon, D}, {H, Min, S}} =
     case TimeLocale of
-        local     -> calendar:now_to_local_time(Now);
-        universal -> calendar:now_to_universal_time(Now)
+        local     -> calendar:now_to_local_time(Timestamp);
+        universal -> calendar:now_to_universal_time(Timestamp)
     end,
     [io_lib:format("~2..0w~2..0w~2..0w ~2..0w:~2..0w:~2..0w.~3..0w",
                    [Y rem 100, Mon, D, H, Min, S, MicroSecs div 1000]),
