@@ -101,8 +101,11 @@ handle_call({activate, Params}, #st{active = false} = St) ->
                 base_file_name = ?gv(base_file_name, Params),
                 counter = 0,
                 max_size = ?gv(max_size, Params)},
-    FoldFun = fun({Direction, Pdu}, State) ->
-        do_log(Direction, Pdu, undefined, State)
+    FoldFun = fun
+        ({Direction, Pdu}, State) ->
+            do_log(Direction, Pdu, undefined, State);
+        ({Direction, Pdu, Timestamp}, State) ->
+            do_log(Direction, Pdu, Timestamp, State)
     end,
     NewSt = lists:foldr(FoldFun, St1, St#st.backlog),
     {ok, ok, NewSt};
@@ -123,6 +126,9 @@ handle_event({pdu, Direction, BinPdu}, #st{active = false} = St) ->
 
 handle_event({pdu, Direction, BinPdu}, St) ->
     {ok, do_log(Direction, BinPdu, undefined, St)};
+
+handle_event({pdu, Direction, BinPdu, Timestamp}, #st{active = false} = St) ->
+    {ok, St#st{backlog = [{Direction, BinPdu, Timestamp}|St#st.backlog]}};
 
 handle_event({pdu, Direction, BinPdu, Timestamp}, St) ->
     {ok, do_log(Direction, BinPdu, Timestamp, St)};
