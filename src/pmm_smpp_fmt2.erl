@@ -382,13 +382,20 @@ get_third_line({CmdId, _Status, _SeqNum, _Body} = Pdu, _BinPdu, Banner) when
         true -> []
     end,
 
+    Cid =
+    case smpp_operation:get_value(cid, Pdu) of
+        undefined -> "";
+        CID ->
+            [",cid=", integer_to_list(CID)]
+    end,
+
     [Banner, "dcs=", DataCoding, ",DLR=", RegisteredDelivery,
         ",dtonnpi=", DestAddrTon, $/, DestAddrNpi,
         ",stonnpi=", SourceAddrTon, $/, SourceAddrNpi,
         ",esmc=", integer_to_list(EsmClass),
         Multi,
         ValidityPeriod,
-        ServiceType, $\n];
+        ServiceType, Cid, $\n];
 get_third_line(_Pdu, _BinPdu, _Banner) -> [].
 
 
