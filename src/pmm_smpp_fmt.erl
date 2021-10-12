@@ -2,9 +2,11 @@
 
 -include_lib("oserl/include/oserl.hrl").
 
--export([format/2, format/4, format/5]).
+-export([format/2, format/4, format/5, integer_to_hexlist2/1, integer_to_hexdigit/1]).
 
+-ifdef(TEST).
 -compile(export_all).
+-endif.
 
 %-define(TEST, 1).
 -ifdef(TEST).
