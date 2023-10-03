@@ -2,7 +2,7 @@
 
 -include_lib("oserl/include/oserl.hrl").
 
--export([format/6]).
+-export([format/7]).
 
 -ifdef(TEST).
 -compile(export_all).
@@ -16,12 +16,12 @@
 -type direction() :: in | out.
 -type err_fun() :: fun((pos_integer()) -> string()).
 
--spec format(direction(), binary(), err_fun(), time_locale(), boolean(), erlang:timestamp()) -> iolist().
-format(Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex, Timestamp) ->
+-spec format(direction(), binary(), err_fun(), time_locale(), boolean(), boolean(), erlang:timestamp()) -> iolist().
+format(Direction, BinPdu, ErrFun, TimeLocale, LogShortMsg, LogHex, Timestamp) ->
     {ok, {_CmdId, _Status, _SeqNum, _Body} = Pdu} = smpp_operation:unpack(BinPdu),
-    format(Pdu, Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex, Timestamp).
+    format(Pdu, Direction, BinPdu, ErrFun, TimeLocale, LogShortMsg, LogHex, Timestamp).
 
-format({CmdId, _Status, _SeqNum, _Body} = Pdu, Direction, BinPdu, _ErrFun, TimeLocale, _LogShortMsgAndUdhHex, Timestamp) when
+format({CmdId, _Status, _SeqNum, _Body} = Pdu, Direction, BinPdu, _ErrFun, TimeLocale, LogShortMsg, LogHex, Timestamp) when
         CmdId =:= ?COMMAND_ID_ENQUIRE_LINK orelse
         CmdId =:= ?COMMAND_ID_ENQUIRE_LINK_RESP orelse
         CmdId =:= ?COMMAND_ID_SUBMIT_SM orelse
@@ -38,12 +38,12 @@ format({CmdId, _Status, _SeqNum, _Body} = Pdu, Direction, BinPdu, _ErrFun, TimeL
     Banner = get_banner2(Direction, CmdId, TimeLocale, Timestamp),
     [
     $\n,
-    get_first_line(Pdu, BinPdu, Banner),
-    get_second_line(Pdu, BinPdu, Banner),
+    get_first_line(Pdu, BinPdu, Banner, LogHex),
+    get_second_line(Pdu, BinPdu, Banner, LogShortMsg),
     get_third_line(Pdu, BinPdu, Banner)
     ];
 
-format({CmdId, Status, SeqNum, _Body} = Pdu, Direction, BinPdu, ErrFun, TimeLocale, LogShortMsgAndUdhHex, Timestamp) ->
+format({CmdId, Status, SeqNum, _Body} = Pdu, Direction, BinPdu, ErrFun, TimeLocale, LogShortMsg, _LogHex, Timestamp) ->
     Level = case Status of
                 ?ESME_ROK -> "info";
                 _         -> "error"
@@ -58,7 +58,7 @@ format({CmdId, Status, SeqNum, _Body} = Pdu, Direction, BinPdu, ErrFun, TimeLoca
     Params0 = [{command_length, Size}|smpp_operation:to_list(Pdu)],
 
     {Params, ShortMessageHex} =
-        get_short_message_and_udh_hex(CmdId, LogShortMsgAndUdhHex, Banner, Params0),
+        get_short_message_and_udh_hex(CmdId, LogShortMsg, Banner, Params0),
 
     [$\n,
      Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), $\n,
@@ -215,16 +215,21 @@ get_short_message_and_udh_hex(CmdId, true, Banner, Params0) when
 get_short_message_and_udh_hex(_, _, _, Params) -> {Params, ""}.
 
 
-get_first_line({CmdId, _Status, SeqNum, _Body} = _Pdu, BinPdu, Banner) when
+get_first_line({CmdId, _Status, SeqNum, _Body} = _Pdu, BinPdu, Banner, LogHex) when
         CmdId =:= ?COMMAND_ID_SUBMIT_SM orelse
         CmdId =:= ?COMMAND_ID_DELIVER_SM orelse
         CmdId =:= ?COMMAND_ID_ENQUIRE_LINK orelse
         CmdId =:= ?COMMAND_ID_ENQUIRE_LINK_RESP ->
 
-    PduHex = hexify(BinPdu),
-    [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), ",hex=", PduHex, $\n];
+    case LogHex of
+      true ->
+        PduHex = hexify(BinPdu),
+        [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), ",hex=", PduHex, $\n];
+      _ ->
+        [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), $\n]
+    end;
 
-get_first_line({CmdId, Status, SeqNum, _Body} = Pdu, BinPdu, Banner) when
+get_first_line({CmdId, Status, SeqNum, _Body} = Pdu, BinPdu, Banner, LogHex) when
         CmdId =:= ?COMMAND_ID_DELIVER_SM_RESP orelse
         CmdId =:= ?COMMAND_ID_SUBMIT_SM_RESP ->
 
@@ -244,50 +249,54 @@ get_first_line({CmdId, Status, SeqNum, _Body} = Pdu, BinPdu, Banner) when
         _ -> ""
     end,
 
-    PduHex = hexify(BinPdu),
-    [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), CmdStatus, MsgId, ",hex=", PduHex, $\n];
+    case LogHex of
+      true ->
+        PduHex = hexify(BinPdu),
+        [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), CmdStatus, MsgId, ",hex=", PduHex, $\n];
+      _ ->
+        [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), CmdStatus, MsgId, $\n]
+    end;
 
-get_first_line({CmdId, _Status, SeqNum, _Body} = Pdu, BinPdu, Banner) when
+get_first_line({CmdId, _Status, SeqNum, _Body} = Pdu, BinPdu, Banner, LogHex) when
         CmdId =:= ?COMMAND_ID_BIND_RECEIVER orelse
         CmdId =:= ?COMMAND_ID_BIND_TRANSMITTER orelse
         CmdId =:= ?COMMAND_ID_BIND_TRANSCEIVER ->
-    PduHex = hexify(BinPdu),
     SystemType = [",stype=", smpp_operation:get_value(system_type, Pdu)],
     SystemId = [",sid=", smpp_operation:get_value(system_id, Pdu)],
     Pass = [",password=", smpp_operation:get_value(password, Pdu)],
     Version = [",version=", integer_to_list(smpp_operation:get_value(interface_version, Pdu), 16)],
-    [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), SystemType, SystemId, Pass, Version, ",hex=", PduHex, $\n];
+    case LogHex of
+      true ->
+        PduHex = hexify(BinPdu),
+        [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), SystemType, SystemId, Pass, Version, ",hex=", PduHex, $\n];
+      _ ->
+        [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), SystemType, SystemId, Pass, Version, $\n]
+    end;
 
-get_first_line({CmdId, Status, SeqNum, _Body} = Pdu, BinPdu, Banner) when
+get_first_line({CmdId, Status, SeqNum, _Body} = Pdu, BinPdu, Banner, LogHex) when
         CmdId =:= ?COMMAND_ID_BIND_RECEIVER_RESP orelse
         CmdId =:= ?COMMAND_ID_BIND_TRANSMITTER_RESP orelse
         CmdId =:= ?COMMAND_ID_BIND_TRANSCEIVER_RESP ->
-    PduHex = hexify(BinPdu),
     SystemId = [",sid=", smpp_operation:get_value(system_id, Pdu, "")],
 
     CmdStatus = [",Bstatus=", integer_to_list(Status)],
-    [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), CmdStatus, SystemId, ",hex=", PduHex, $\n].
+
+    case LogHex of
+      true ->
+        PduHex = hexify(BinPdu),
+        [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), CmdStatus, SystemId, ",hex=", PduHex, $\n];
+      _ ->
+        [Banner, cmdname(CmdId), " ", integer_to_list(SeqNum), CmdStatus, SystemId, $\n]
+    end
+.
 
 
-get_second_line({CmdId, _Status, _SeqNum, _Body} = Pdu, _BinPdu, Banner) when
+get_second_line({CmdId, _Status, _SeqNum, _Body} = Pdu, _BinPdu, Banner, LogShortMsg) when
         CmdId =:= ?COMMAND_ID_SUBMIT_SM orelse
         CmdId =:= ?COMMAND_ID_DELIVER_SM ->
 
     DestAddr = smpp_operation:get_value(destination_addr, Pdu, ""),
-
     SrcAddr = smpp_operation:get_value(source_addr, Pdu, ""),
-
-    ShortMsg = smpp_operation:get_value(short_message, Pdu),
-    HasUDH = smpp_sm:udhi(Pdu),
-    ShortMsgLogMsgPart =
-    if
-        HasUDH andalso CmdId =:= ?COMMAND_ID_SUBMIT_SM andalso ShortMsg =/= undefined ->
-            {_Udh, Rest} = smpp_sm:chop_udh(ShortMsg),
-            Rest;
-        ShortMsg =/= undefined ->
-            ShortMsg;
-        true -> ""
-    end,
 
     ReceiptedMsgID =
     case smpp_operation:get_value(receipted_message_id, Pdu) of
@@ -296,9 +305,26 @@ get_second_line({CmdId, _Status, _SeqNum, _Body} = Pdu, _BinPdu, Banner) when
             [",r_msgid=", RMI]
     end,
 
-    [Banner, "dest=", DestAddr, ",src=", SrcAddr, ",msgtxt=", ShortMsgLogMsgPart, ReceiptedMsgID, $\n];
+    case LogShortMsg of
+      true ->
+        ShortMsg = smpp_operation:get_value(short_message, Pdu),
+        HasUDH = smpp_sm:udhi(Pdu),
+        ShortMsgLogMsgPart =
+          if
+            HasUDH andalso CmdId =:= ?COMMAND_ID_SUBMIT_SM andalso ShortMsg =/= undefined ->
+              {_Udh, Rest} = smpp_sm:chop_udh(ShortMsg),
+              Rest;
+            ShortMsg =/= undefined ->
+              ShortMsg;
+            true -> ""
+          end,
+        [Banner, "dest=", DestAddr, ",src=", SrcAddr, ",msgtxt=", ShortMsgLogMsgPart, ReceiptedMsgID, $\n];
+      _ ->
+        [Banner, "dest=", DestAddr, ",src=", SrcAddr, ReceiptedMsgID, $\n]
+    end;
 
-get_second_line(_Pdu, _BinPdu, _Banner) -> [].
+
+get_second_line(_Pdu, _BinPdu, _Banner, _LogShortMsgAndUdhHex) -> [].
 
 
 get_third_line({CmdId, _Status, _SeqNum, _Body} = Pdu, _BinPdu, Banner) when
